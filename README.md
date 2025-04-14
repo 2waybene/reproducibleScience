@@ -7,5 +7,9 @@ Here are a rough ist of study I am working on, I will have both the code and rec
 1. single call RNAseq study (GSE242666)
 2. single cell ATACseq study(
 3. single cell trajectory analysis
+4. deconvoluation analysis with cibersortX
 
+Topic based plan
+1. RNAseq annotation
+2. 
 GSE242666 
