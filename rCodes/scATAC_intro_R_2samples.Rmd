@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 
@@ -27,53 +29,15 @@ library(hdf5r)
 
 ```{r}
 #setwd("E:/SingleCellPublicData/temp/")
-counts <- Read10X_h5(filename = "x:/project2025/temp/GSM5723631_Young_HSC_filtered_peak_bc_matrix.h5")
+# counts <- Read10X_h5(filename = "x:/project2025/temp/GSM5723631_Young_HSC_filtered_peak_bc_matrix.h5")
 #counts <- Read10X_h5(filename = "E:/SingleCellPublicData/dataDownload/GSE122662_Raw/GSM3477269_D15_serum_GDF9_exp_R1_C1_gene_bc_mat.h5")
 #counts <- Read10X_h5(filename = "E:/SingleCellPublicData/temp/GSM5723631_Young_HSC_filtered_peak_bc_matrix.h5")
+
 ```
 
-```{r}
-#setwd("E:/SingleCellPublicData/temp/")
-meta <- read.csv(
-file = 'x:/project2025/temp/GSM5723631_Young_HSC_singlecell.csv.gz',
-header = TRUE,
-row.names = 1)
-```
-
-```{r}
-head(meta)
-```
-
-
-
-```{r}
-  chrom_assay <- CreateChromatinAssay(
-  counts = counts,
-  sep = c(":", "-"),
-  genome = 'mm10',
-  fragments = 'x:/project2025/temp/GSM5723631_Young_HSC_fragments.tsv.gz',
- #  fragments = 'E:/SingleCellPublicData/dataDownload/GSE162662/GSM5723631_Young_HSC_fragments.tsv.gz',
-  min.cells = 10,
-  min.features = 200
-)
-```
-
-
-```{r}
-data <- CreateSeuratObject(
-  counts = chrom_assay,
-  assay = "peaks",
-  meta.data = meta
-)
-```
-
-
-```{r}
-data[[]]
-```
 
 EnsDb.Hsapiens.v86 for human
-```{r}
+```{r, eval=FALSE}
 if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 
@@ -95,127 +59,6 @@ seqlevelsStyle(annotations) <- 'UCSC'
 ```
 
 
-
-```{r}
-Annotation(data) <- annotations
-```
-
-
-```{r}
-data <- NucleosomeSignal(object = data) #fragment ratio 147-294: <147
-```
-
-```{r}
-data <- TSSEnrichment(object = data, fast = FALSE)
-```
-
-```{r}
-data$blacklist_ratio <- data$blacklist_region_fragments / data$peak_region_fragments
-
-#data[[]]
-```
-
-
-```{r}
-data$pct_reads_in_peaks <- data$peak_region_fragments / data$passed_filters * 100 
-```
-
-
-```{r}
-VlnPlot(
-  object = data,
-  features = c('peak_region_fragments', 'pct_reads_in_peaks', 
-                'blacklist_ratio', 'nucleosome_signal', 'TSS.enrichment'),
-  pt.size = 0.1,
-  ncol = 5
-)
-```
-
-
-
-could do this....
-```{r}
-data <- subset(
-  x = data,
-  subset = peak_region_fragments > 3000 &
-    peak_region_fragments < 20000 &
-    pct_reads_in_peaks > 15 &
-    blacklist_ratio < 0.05 &
-    nucleosome_signal < 4 &
-    TSS.enrichment > 2
-)
-```
-
-
-
-```{r}
-low_prf <- quantile(data[["peak_region_fragments"]]$peak_region_fragments, probs = 0.02)
-hig_prf <- quantile(data[["peak_region_fragments"]]$peak_region_fragments, probs = 0.98)
-low_prp <- quantile(data[["pct_reads_in_peaks"]]$pct_reads_in_peaks, probs = 0.02)
-
-high_blr <- quantile(data[["blacklist_ratio"]]$blacklist_ratio, probs = 0.98)
-
-hig_ns <- quantile(data[["nucleosome_signal"]]$nucleosome_signal, probs = 0.98)
-
-low_ts <- quantile(data[["TSS.enrichment"]]$TSS.enrichment, probs = 0.02)
-```
-
-```{r}
-print(low_prf)
-print(hig_prf)
-print(low_prp)
-print(high_blr)
-print(hig_ns)
-print(low_ts)
-```
-
-```{r}
-data <- subset(
-  x = data,
-  subset = peak_region_fragments > low_prf &
-    peak_region_fragments < hig_prf &
-    pct_reads_in_peaks > low_prp &
-    blacklist_ratio < high_blr &
-    nucleosome_signal < hig_ns &
-    TSS.enrichment > low_ts
-)
-```
-
-
-
-
-
-```{r}
-data
-```
-
-
-Normalization, dimension reduction
-
-```{r}
-data <- RunTFIDF(data)
-```
-
-```{r}
-data <- FindTopFeatures(data, min.cutoff = 'q0')
-data
-```
-
-
-```{r}
-data <- RunSVD(data)
-```
-
-```{r}
-DepthCor(data)
-```
-
-```{r}
-data <- RunUMAP(object = data, reduction = 'lsi', dims = 2:30)
-data <- FindNeighbors(object = data, reduction = 'lsi', dims = 2:30)
-data <- FindClusters(object = data, verbose = FALSE, algorithm = 3)
-DimPlot(object = data, label = TRUE) + NoLegend()
-```
 
 
 Multiple samples....
