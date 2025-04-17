@@ -1,0 +1,791 @@
+---
+title: "DESeq2 STAR analysis report"
+output: html_document
+date: 'Compiled: `r Sys.Date()`'
+
+---
+
+
+  
+  
+```{r setup, include=FALSE}
+all_times <- list()  # store the time for each chunk
+knitr::knit_hooks$set(time_it = local({
+  now <- NULL
+  function(before, options) {
+    if (before) {
+      now <<- Sys.time()
+    } else {
+      res <- difftime(Sys.time(), now, units = "secs")
+      all_times[[options$label]] <<- res
+    }
+  }
+}))
+knitr::opts_chunk$set(
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff = 95),
+  message = FALSE,
+  warning = FALSE,
+  time_it = TRUE
+)
+```
+# Study information
+
+## Research background 
+
+Ventricular arrhythmias demonstrate a prominent circadian rhythm, being more common in the morning on waking. Mechanistically this is attributed in part to transcriptional rhythms in key ion channels and intracellular Ca2+ handling proteins that underpin myocyte excitability. The underlying signalling events that mediate this time-of-day dependent alteration in ion channels in particular (and the cardiac transcriptome in general) are poorly understood. In recent work we have determined that: (i) differential chromatin accessibility underpins rhythmic cardiac gene transcription, (ii) glucocorticoid receptor (GR) motifs are highly enriched in open chromatin profiles underlying ion channels of interest and that GR directly binds to key ion channels that underpin arrhythmia susceptibility, and (iii) sustained pharmacological block of GR with RU-486 abolishes the ion channel and arrhythmia rhythm. We have recently made the striking discovery that cardiomyocyte specific knockout of GR in mice (cardioGRKO) completely abrogated the awake period propensity to ventricular arrhythmia seen in control animals. Building on these findings, we now propose an RNAseq study to address whether the GR is a direct regulator of the transcriptional rhythms in the heart. This approach will provide unprecedented insight into the molecular signature that predisposes the heart to ventricular arrhythmias and determine a new role for GR in this fundamental biological process.
+
+## Hypothesis
+
+Project:    HippoCampusRNAseq 
+
+
+## Experimental Design and Data analysis strategy:
+
+Project:    hippocampus
+at WT and GRA treated with PBS or dex.  There are 4 groups of mice.
+
+1.	WT (n=5), PBS
+2.	WT (n=5), dex
+3.	GRA (n=5), PBS
+4.	GRA (n=5), dex
+
+
+## Comparisons of interest
+
+1. WT dex vs WT PBS
+2. GRA dex vs GRA PBS
+3. GRA PBS vs WT PBS
+4. GRA dex vs WT dex
+
+
+
+
+
+# DESeq2 analysis
+
+
+```{r init}
+
+source("x:/project2019/RNAseqProj/scripts/R_help_scripts/RNAseqHelpers.R")
+source("x:/R-project/customPackages/plotTools.R")
+setwd ("x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/GSE260620/")
+
+## A helper function to clean the datamatrix
+cleanMatrixData <- function (dmIN, idColumn = 1)
+{
+  require (plyr)
+  ##  clean data with 0 cross all samples
+  t <- dmIN[-(which(rowSums(dmIN[,-idColumn]) == 0 )),]
+  dim(t)
+  
+  ##  Filtering out row with ID as "?"
+  if (length(which(t[,idColumn] == "?")) != 0 )
+  {
+    t.2 <- t[-(which(t[,idColumn] == "?")),]
+    dim(t.2)
+    t.3 <- ddply(t.2,colnames(t.2)[idColumn],numcolwise(sum))
+    dim(t.3)
+  }else{
+    t.3 <- ddply(t,colnames(t)[idColumn],numcolwise(sum))
+  }
+  ##   remove duplicate entries by taking the sum
+  return(t.3)
+}
+
+library(EnhancedVolcano)
+
+## Simple function for plotting a Volcano plot, returns a ggplot object
+## https://mkempenaar.github.io/gene_expression_analysis/chapter-5.html
+
+deseq.volcano.label <- function(res, datasetName, gene2label) {
+  return(EnhancedVolcano(res, x = 'log2FoldChange', y = 'padj',
+                         lab=rownames(res),
+                          selectLab =gene2label,
+                         title = paste(datasetName, "DESeq2 analysis"),
+                         subtitle = bquote(italic('FDR <= 0.05 and absolute FC >= 2')),
+                         # Change text and icon sizes
+                         labSize = 3, pointSize = 1.5, axisLabSize=10, titleLabSize=12,
+                         subtitleLabSize=8, captionLabSize=10,
+                         # Disable legend
+                         legendPosition = "none",
+                         # Set cutoffs
+                         pCutoff = 0.05, FCcutoff = 1))
+}
+
+
+deseq.volcano <- function(res, datasetName) {
+  return(EnhancedVolcano(res, x = 'log2FoldChange', y = 'padj',
+                         lab=rownames(res),
+                         title = paste(datasetName, "DESeq2 analysis"),
+                         subtitle = bquote(italic('FDR <= 0.05 and absolute FC >= 2')),
+                         # Change text and icon sizes
+                         labSize = 3, pointSize = 1.5, axisLabSize=10, titleLabSize=12,
+                         subtitleLabSize=8, captionLabSize=10,
+                         # Disable legend
+                         legendPosition = "none",
+                         # Set cutoffs
+                         pCutoff = 0.05, FCcutoff = 1))
+}
+
+
+
+
+
+
+
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+
+##  credit https://www.datanovia.com/en/blog/venn-diagram-with-r-or-rstudio-a-million-ways/
+
+##  
+# Helper function to display Venn diagram
+display_venn <- function(x, ...){
+  library(VennDiagram)
+  grid.newpage()
+  venn_object <- venn.diagram(x, filename = NULL, ...)
+  grid.draw(venn_object)
+}
+
+
+```
+
+# prepare count data and meta data
+
+```{r prepareData, eval=FALSE}
+
+##  count matrix prepared outside the R
+
+dm <- read.table ("x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/GSE260620/mouse_gene_count.txt", header = TRUE)
+
+##  Clean sample header
+
+#colnames(dm) <- str_replace(colnames(dm), "\\.", "_") 
+#strsplit(colnames(dm)[1], "_")
+
+
+sampleNames <- apply(as.data.frame(colnames(dm)),1, function (x)  {strsplit(x, "_")[[1]][1]} )
+colnames(dm) <- sampleNames 
+dim(dm)
+
+#library(gtools)
+#mixedsort (colnames(dm))
+#dm <- dm  %>% select (mixedsort (colnames(dm)))
+
+dm2 <- cleanMatrixData(dm)
+colnames(dm2)
+dim(dm2)
+
+dm.annotated.list  <- ensemblIDannotated_hs(dm2)
+dm.with.symbol = dm.annotated.list$SymbolOnly
+dim(dm.with.symbol)
+
+dm.with.symbol[which(dm.with.symbol$hgnc_symbol == "ATG9B"),]
+
+#write.table(dm.with.symbol, file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/processedData/GSE260620_Count_with_symbol.csv",
+#    quote = FALSE, row.names = FALSE)
+
+## ========================================================
+## https://support.bioconductor.org/p/91218/#91256 calculate TPM per row
+## ========================================================
+
+myTPMcalculator <- function(mtx, geneLen) {
+    x <- apply(mtx, 2, function(x) {
+        x/geneLen
+    })
+    tmp.mat <- t(t(x) * 1e+06/colSums(x))
+    return(tmp.mat)
+}
+
+#dm.GSE250273.TPM <- myTPMcalculator(dm.GSE250273[, -c(1:2)], dm.GSE250273[, 2])
+#dm.GSE250273.TPM <- cbind(dm.GSE250273[, c(1:2)], dm.GSE250273.TPM)
+#head(dm.GSE250273.TPM)
+
+
+##================================================
+
+metaData <- read.table ("x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/GSE260620/doc/experimentalMetadata.txt", header = TRUE, sep="\t")
+
+head(metaData)
+
+BeWo.sample <- metaData[which(metaData$CellLine =="BeWo"),] 
+TFEB.sample <- metaData[which(metaData$CellLine =="TFEB_KO" & metaData$Genetic == "KO"),]
+SCR.sample <- metaData[which(metaData$CellLine =="SCR"),] 
+siTFEB.sample <- metaData[which(metaData$CellLine =="siTFEB"),] 
+
+
+```
+# Load prepared count data and meta data
+
+```{r load data}
+dm.with.symbol = read.table("x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/processedData/GSE260620_Count_with_symbol.csv", header = TRUE)
+
+## ========================================================
+## https://support.bioconductor.org/p/91218/#91256 calculate TPM per row
+## ========================================================
+
+myTPMcalculator <- function(mtx, geneLen) {
+    x <- apply(mtx, 2, function(x) {
+        x/geneLen
+    })
+    tmp.mat <- t(t(x) * 1e+06/colSums(x))
+    return(tmp.mat)
+}
+
+#dm.GSE250273.TPM <- myTPMcalculator(dm.GSE250273[, -c(1:2)], dm.GSE250273[, 2])
+#dm.GSE250273.TPM <- cbind(dm.GSE250273[, c(1:2)], dm.GSE250273.TPM)
+#head(dm.GSE250273.TPM)
+
+
+##================================================
+
+metaData <- read.table ("x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/GSE260620/doc/experimentalMetadata.txt", header = TRUE, sep="\t")
+
+head(metaData)
+
+BeWo.sample <- metaData[which(metaData$CellLine =="BeWo"),] 
+TFEB.sample <- metaData[which(metaData$CellLine =="TFEB_KO" & metaData$Genetic == "KO"),]
+SCR.sample <- metaData[which(metaData$CellLine =="SCR"),] 
+siTFEB.sample <- metaData[which(metaData$CellLine =="siTFEB"),] 
+
+
+
+```
+
+
+
+# DESeq2 modeling
+
+```{r examine data}
+
+## prepare samples
+
+samples.2.use = c(BeWo.sample$FileID, TFEB.sample$FileID, SCR.sample$FileID, siTFEB.sample$FileID)
+dm.2.use  = dm.with.symbol[, c(1, which(colnames(dm.with.symbol) %in% samples.2.use))]
+dim(dm.2.use )
+
+
+metaData.2.use <- metaData[ which( metaData$FileID  %in% samples.2.use), ]
+metaData.2.use$CellLine[metaData.2.use$CellLine == "TFEB_KO"] = c(rep("TFEB", 8))
+metaData.2.use = metaData.2.use[, -c(6)]
+
+##  alternatively
+# metaData.2.use$group = paste (metaData.2.use$CellLine,metaData.2.use$Treatment , sep= "_")
+# https://support.bioconductor.org/p/9155909/
+
+##  Step 1: Create an DESeq2 object
+DESeq2Table <- DESeqDataSetFromMatrix(countData=dm.2.use, 
+                              colData=metaData.2.use , 
+                              design=~ CellLine + Treatment, tidy = TRUE)
+
+
+dds <- DESeq(DESeq2Table)
+nrow(dds)
+
+keep <- rowSums(counts(dds)) > 1
+dds <- dds[keep,]
+nrow(dds)
+
+keep <- rowSums(counts(dds) >= 10) >= 3
+dds <- dds[keep,]
+nrow(dds)
+
+
+
+lambda <- 10^seq(from = -1, to = 2, length = 1000)
+cts <- matrix(rpois(1000*100, lambda), ncol = 100)
+
+library("vsn")
+meanSdPlot(cts, ranks = FALSE)
+
+
+log.cts.one <- log2(cts + 1)
+meanSdPlot(log.cts.one, ranks = FALSE)
+
+vsd <- vst(dds, blind = FALSE)
+head(assay(vsd), 3)
+colData(vsd)
+
+rld <- rlog(dds, blind = FALSE)
+head(assay(rld), 3)
+
+library("dplyr")
+library("ggplot2")
+
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+    mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+
+```
+
+
+## PCA plots
+
+```{r heatmap}
+# CellLine + Treatment
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+
+library("pheatmap")
+library("RColorBrewer")
+
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$CellLine, vsd$Treatment,  vsd$Rep, sep = " - " )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+
+
+
+library("PoiClaClu")
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste( dds$CellLine,  dds$Treatment, dds$Rep, sep=" - " )
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = poisd$dd,
+         clustering_distance_cols = poisd$dd,
+         col = colors)
+
+```
+```{r pca}
+
+
+plotPCA(vsd, intgroup = c("CellLine",  "Treatment", "Rep"))
+
+pcaData <- plotPCA(vsd, intgroup = c("CellLine",  "Treatment", "Rep"), returnData = TRUE)
+pcaData$Rep <- as.factor(pcaData$Rep)
+
+# RDS (pcaData, file = "x:/project2023/CidlowskiRNAseq/DavidRNAseq/RNAseqAnalysis/analysisDir/firstPass/vsdPCA_data.rds")
+
+
+
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+# https://stackoverflow.com/questions/15965870/fill-and-border-colour-in-geom-point-scale-colour-manual-in-ggplot
+
+ggplot(pcaData,aes(x=PC1,y=PC2,color=Treatment,shape=CellLine, fill = Rep))+
+  geom_point(size=3)+
+  scale_shape_manual(values = c(21, 22, 23, 24) )+
+  scale_color_manual(values = c("green","red") )+
+  scale_fill_manual(values=c("yellow","black", "blue","orange"))+
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  ggtitle("PCA with VST data")  +
+  guides(fill=guide_legend(override.aes=list(shape=c(21))))+
+  guides(color=guide_legend(override.aes=list(shape=c(21))))
+
+  
+library("glmpca")
+gpca <- glmpca(counts(dds), L=2)
+gpca.dat <- gpca$factors
+gpca.dat$CellLine <- dds$CellLine
+gpca.dat$Treatment <- dds$Treatment
+gpca.dat$Rep <- as.factor(dds$Rep)
+
+
+ggplot(gpca.dat,aes(x=dim1,y=dim2,color=Treatment,shape=CellLine,fill=Rep))+
+  geom_point(size=3)+
+  scale_shape_manual(values = c(21, 22, 23, 24) )+
+  scale_color_manual(values = c("green","red") )+
+  scale_fill_manual(values=c("yellow","black", "blue","orange"))+
+  ggtitle("glmpca - Generalized PCA")  +
+  guides(fill=guide_legend(override.aes=list(shape=c(21))))+
+  guides(color=guide_legend(override.aes=list(shape=c(21))))
+
+
+```
+
+
+
+```{r DEGs}
+
+##=================================
+##  conventional default method
+##=================================
+
+DESeq2Table$group <- factor (paste (DESeq2Table$CellLine,DESeq2Table$Treatment ))
+
+#DESeq2Table$group <- paste (DESeq2Table$CellLine,DESeq2Table$Treatment , sep= "_")
+design(DESeq2Table) <- ~ group
+
+
+dds <- DESeq(DESeq2Table)
+resultsNames(dds)
+
+
+
+```
+
+
+
+# Get the constrasts
+## 1. BeWo.FRSK_vs_BeWo.DMSO
+
+```{r BeWo_FRSK vs BeWo_DMSO}
+
+res <-  results(dds, name= "group_BeWo.FRSK_vs_BeWo.DMSO")
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- BeWo Cellline: FRSK.vs.DMSO", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+
+
+deseq.volcano(res = res , datasetName = "BeWo Cellline: FRSK.vs.DMSO")
+
+gene2label = c("ATG9A", "ATG9B", "ERVFRD-1", "CGA", "CGB1", "CGB3")
+
+#which(gene2label %in% rownames(res))
+
+deseq.volcano.label (res = res, datasetName = "BeWo Cellline: FRSK.vs.DMSO", gene2label) 
+
+pdf (file = "X:/project2025/GuardiaProject/TFEBpaper/FigInHighResolution/BeWo_FRSK_DMSO.pdf", width = 5, height = 4)
+deseq.volcano.label (res = res, datasetName = "BeWo Cellline: FRSK.vs.DMSO", gene2label) 
+dev.off()
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_BeWo.FRSK_vs_BeWo.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_BeWo.FRSK_vs_BeWo.DMSO)
+which(DEG_BeWo.FRSK_vs_BeWo.DMSO == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_BeWo_FRSK_vs_BeWo_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+
+
+```
+## 2. TFEB.DMSO_vs_BeWo.DMSO"
+
+```{r TFEB_DMSO vs BeWo_DMSO}
+
+res <-  results(dds, name= "group_TFEB.DMSO_vs_BeWo.DMSO")
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- DMSO condition: TFEB vs BeWo", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "DMSO condition: TFEB vs BeWo")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_TFEB.DMSO_vs_BeWo.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_TFEB.DMSO_vs_BeWo.DMSO)
+
+
+which(DEG_TFEB.DMSO_vs_BeWo.DMSO == "ATG9B")
+
+
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_TFEB_DMSO_vs_BeWo_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+
+
+```
+## 9. TFEB.DMSO_vs_BeWo.FRSK"
+
+```{r TFEB_DMSO vs BeWo_FRSK}
+
+res <-  results(dds,contrast = c("group", "TFEB.DMSO", "BeWo.FRSK"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- Interaction: TFEB_DMSO vs BeWo_FRSK", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "Interaction: TFEB_DMSO vs BeWo_FRSK")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_TFEB.DMSO_vs_BeWo.FRSK <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_TFEB.DMSO_vs_BeWo.FRSK)
+
+
+which(DEG_TFEB.DMSO_vs_BeWo.FRSK == "ATG9B")
+
+
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_TFEB_DMSO_vs_BeWo_FRSK.csv",
+#    quote = FALSE, row.names = TRUE)
+
+
+
+```
+
+## 3. TFEB.FRSK_vs_BeWo.DMSO"
+
+```{r TFEB_FRSK vs BeWo_DMSO}
+
+res <-  results(dds, name= "group_TFEB.FRSK_vs_BeWo.DMSO")
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- interaction: TFEB_FRSK vs BeWo_DMSO", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "Interaction: TFEB_FRSK vs BeWo_DMSO")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_TFEB.FRSK_vs_BeWo.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_TFEB.FRSK_vs_BeWo.DMSO)
+
+
+which(DEG_TFEB.FRSK_vs_BeWo.DMSO == "ATG9B")
+
+
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_TFEB_FRSK_vs_BeWo_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+
+
+
+```
+
+## 4. TFEB.FRSK_vs_TFEB.DMSO"
+
+```{r TFEB_FRSK vs TFEB_DMSO}
+
+res <-  results(dds,  contrast = c("group", "TFEB.FRSK", "TFEB.DMSO"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot --  TFEB Cellline: FRSK vs DMSO", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "TFEB Cellline: FRSK vs DMSO")
+
+
+gene2label = c("ATG9A", "ATG9B", "ERVFRD-1", "CGA", "CGB1", "CGB3")
+pdf (file = "X:/project2025/GuardiaProject/TFEBpaper/FigInHighResolution/TFEB_FRSK_DMSO.pdf", width = 5, height = 4)
+deseq.volcano.label (res = res, datasetName = "TFEB Cellline: FRSK vs DMSO", gene2label) 
+dev.off()
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_TFEB.FRSK_vs_TFEB.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_TFEB.FRSK_vs_TFEB.DMSO)
+
+which(DEG_TFEB.FRSK_vs_TFEB.DMSO == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_TFEB_FRSK_vs_TFEB_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+
+
+```
+## 5. SCR.FRSK_vs_SCR.DMSO
+
+
+```{r SCR_FRSK vs SCR_DMSO}
+
+res <-  results(dds, contrast = c("group", "SCR.FRSK", "SCR.DMSO"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- SCR Cellline: FRSK.vs.DMSO", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "SCR Cellline: FRSK.vs.DMSO")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_SCR.FRSK_vs_SCR.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_SCR.FRSK_vs_SCR.DMSO)
+
+which(DEG_SCR.FRSK_vs_SCR.DMSO == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_SCR_FRSK_vs_SCR_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+```
+## 6.  SCR.DMSO_vs_siTFEB.DMSO
+
+```{r SCR_DMSO vs siTFEB_DMSO}
+
+res <-  results(dds, contrast = c("group", "SCR.DMSO", "siTFEB.DMSO"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- DMSO condition: SCR vs siTFEB", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "DMSO condition: SCR vs siTFEB")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_SCR.DMSO_vs_siTFEB.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_SCR.DMSO_vs_siTFEB.DMSO)
+
+which(DEG_SCR.DMSO_vs_siTFEB.DMSO == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_SCR_DMSO_vs_siTFEB_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+```
+
+## 7. SCR.FRSK_vs_siTFEB.DMSO
+
+
+```{r SCR_FRSK vs siTFEB_DMSO}
+
+res <-  results(dds, contrast = c("group", "SCR.FRSK", "siTFEB.DMSO"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- Interaction: SCR.FRSK vs siTFEB.DMSO", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "Interaction: SCR.FRSK vs siTFEB.DMSO")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_SCR.FRSK_vs_siTFEB.DMSO <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_SCR.FRSK_vs_siTFEB.DMSO)
+which(DEG_SCR.FRSK_vs_siTFEB.DMSO == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_SCR_FRSK_vs_siTFEB_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+
+```
+
+## 10. SCR.DMSO_vs_siTFEB.FRSK
+
+
+```{r SCR_DMSO vs siTFEB_FRSK}
+
+res <-  results(dds, contrast = c("group", "SCR.DMSO", "siTFEB.FRSK"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- Interaction: SCR.DMSO vs siTFEB.FRSK", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "Interaction: SCR.DMSO vs siTFEB.FRSK")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_SCR.DMSO_vs_siTFEB.FRSK <- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_SCR.DMSO_vs_siTFEB.FRSK)
+
+which(DEG_SCR.DMSO_vs_siTFEB.FRSK == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_SCR_DMSO_vs_siTFEB_FRSK.csv",
+#    quote = FALSE, row.names = TRUE)
+```
+
+## 8.  siTFEB.FRSK_vs_siTFEB.DMSO
+
+```{r siTFEB_FRSK vs siTFEB_DMSO}
+
+res <-  results(dds, contrast = c("group", "siTFEB.FRSK", "siTFEB.DMSO"))
+
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Mouse RNAseq Volcano plot -- siTFEB cell: FRSK vs DMSO", xlim=c(-10,10)))
+with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+mtext ("adjusted p-value < 0.05, log2FoldChange > 1")
+
+
+## Note: input data is the corrected DESeq2 output using the 'lfcShrink' function (see chapter 4)
+deseq.volcano(res = res , datasetName = "siTFEB cell: FRSK vs DMSO")
+
+dim(subset(res, padj<.05 & abs(log2FoldChange)>1))
+
+DEG_siTFEB.FRSK_vs_siTFEB.DMSO<- rownames(subset(res, padj<.05 & abs(log2FoldChange)>1))
+head(DEG_siTFEB.FRSK_vs_siTFEB.DMSO)
+which(DEG_siTFEB.FRSK_vs_siTFEB.DMSO == "ATG9B")
+#write.csv(subset(res, padj<.05 & abs(log2FoldChange)>1), file = "x:/project2024/CharlyProject/TFEB_Atg9b/TFEB_Atg9b/Cesana_CellDeathNDiff_data/DEGs/DEG_siTFEB_FRSK_vs_siTFEB_DMSO.csv",
+#    quote = FALSE, row.names = TRUE)
+
+
+```
+
+# Working on the DEGs
+
+```{r DEGs comparison}
+
+library(gplots)
+# Create a Venn-diagram given just the list of gene-names for both sets
+venn(list("BeWo.FRSK_vs_BeWo.DMSO" = DEG_BeWo.FRSK_vs_BeWo.DMSO, 
+          "TFEB.DMSO_vs_BeWo.FRSK" = DEG_TFEB.DMSO_vs_BeWo.FRSK, 
+          "TFEB.FRSK_vs_BeWo.DMSO"=DEG_TFEB.FRSK_vs_BeWo.DMSO,
+          "TFEB.FRSK_vs_TFEB.DMSO " =DEG_TFEB.FRSK_vs_TFEB.DMSO   ))
+
+
+
+x <- list("BeWo.FRSK_vs_BeWo.DMSO" = DEG_BeWo.FRSK_vs_BeWo.DMSO, 
+          "TFEB.DMSO_vs_BeWo.FRSK" = DEG_TFEB.DMSO_vs_BeWo.FRSK, 
+          "TFEB.FRSK_vs_BeWo.DMSO"=DEG_TFEB.FRSK_vs_BeWo.DMSO,
+          "TFEB.FRSK_vs_TFEB.DMSO " =DEG_TFEB.FRSK_vs_TFEB.DMSO   )
+
+library(ggvenn)
+ggvenn(
+  x, 
+  fill_color = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 4
+)
+
+
+# Four dimension Venn plot
+display_venn(x)
+
+display_venn(
+  x,
+  category.names = c("Set 1" , "Set 2 " , "Set 3", "Set 4"),
+  
+ #  category.names = c("WT_dex_vs_PBS", 
+  #        "GRA_PBS_vs_dex" , 
+  #        "PBS_GRA_WT",
+  #        "dex_WT_GRA"),
+  fill = c("#999999", "#E69F00", "#56B4E9", "#009E73")
+)
+
+
+display_venn(
+        x,
+        category.names = c("Set 1" , "Set 2 " , "Set 3", "Set 4"),
+       # category.names = c("WT_dex_vs_PBS", 
+       #   "GRA_PBS_vs_dex" , 
+      #    "PBS_GRA_WT",
+       #   "dex_WT_GRA"),
+        # Circles
+        lwd = 2,
+        lty = 'blank',
+        fill = c("#999999", "#E69F00", "#56B4E9", "#009E73"),
+        # Numbers
+        cex = .9,
+        fontface = "italic",
+        # Set names
+        cat.cex = 1,
+        cat.fontface = "bold",
+        cat.default.pos = "outer",
+        cat.dist = c(0.055, 0.055, 0.1, 0.1)
+)
+
+```
